@@ -48,7 +48,9 @@ const SYNC_INTERVAL = 10*60e3;  // アプリに戻った時、前回同期から
 const KEEP = 4;                 // index.html の KEEP_SCREENS と同じ。これより遠い画像・動画の要求は送る前に取り消す
 const VIDEO_NEAR = 1;           // 動画は画面の±1画面以内に入ったら URL を入れる
 const VIDEO_FAR  = 2.5;         // ±2.5画面より離れた停止中の動画は URL を外してメモリを解放する
-const ORIG_AUTO_MAX = 15*1024*1024;  // サムネを作れない原寸ファイルがこれより大きければ、自動では読まずタップで表示
+// サムネを作れない原寸ファイルがこれより大きければ、自動では読まずタップで表示（iPhone等はメモリが少ないので小さめ）
+const ORIG_AUTO_MAX_DESKTOP = 15*1024*1024, ORIG_AUTO_MAX_MOBILE = 5*1024*1024;
+const ORIG_AUTO_MAX = MOBILE ? ORIG_AUTO_MAX_MOBILE : ORIG_AUTO_MAX_DESKTOP;
 const MAX_THUMB_REQ = 2;        // get_thumbnail_batch の同時実行数
 
 const ICON_LOGOUT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>';
@@ -555,8 +557,9 @@ const origSize = path => { const e = entryMap && entryMap.get(path); return (e &
 const tapped = new Set();
 function bigPlaceholder(path){
   const mb = (origSize(path) / 1048576).toFixed(1), x = escH(extOf(path).toUpperCase());
+  const label = noThumb.has(path) ? `サムネイルを作れない ${x}（${mb}MB）` : `大きい ${x}（${mb}MB）`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400"><rect width="300" height="400" fill="#3a332c"/>`+
-    `<text x="150" y="188" fill="#f2eee9" font-family="sans-serif" font-size="17" text-anchor="middle">大きい ${x}（${mb}MB）</text>`+
+    `<text x="150" y="188" fill="#f2eee9" font-family="sans-serif" font-size="16" text-anchor="middle">${label}</text>`+
     `<text x="150" y="218" fill="#f0765a" font-family="sans-serif" font-size="15" text-anchor="middle">タップで表示</text></svg>`;
   return "data:image/svg+xml," + encodeURIComponent(svg);
 }
@@ -578,7 +581,9 @@ function resolveSrc(src){
   if(inflight.has(src)) return inflight.get(src);
 
   const viaLink = () => {
-    if(kind !== "video" && origSize(path) > ORIG_AUTO_MAX && !tapped.has(src)) return Promise.resolve(bigPlaceholder(path));
+    // 原寸を自動では読まない：大きいファイル、または iPhone等でサムネイル作成に失敗した画像（高解像度だと1枚で数十〜百MB以上になる）
+    if(kind !== "video" && !tapped.has(src) && (origSize(path) > ORIG_AUTO_MAX || (MOBILE && noThumb.has(path))))
+      return Promise.resolve(bigPlaceholder(path));
     return call(API, "files/get_temporary_link", {path}, null, () => isWanted(src))
       .then(j => { links.set(src, {url: j.link, exp: Date.now() + LINK_TTL}); return j.link; });
   };
