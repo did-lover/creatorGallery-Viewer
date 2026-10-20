@@ -377,9 +377,9 @@ function convert(map){
     for(const p of c.posts.values()){
       if(!p.files.length) continue;
       p.files.sort((a, b) => cmpSegs(a.segs, b.segs));          // build.py と同じ：パスの自然順
-      const media = p.files.map(f => f.kind === "video"
-        ? {type:"video", src: dbxSrc(f.e, "video"), name: f.segs.join("/")}
-        : {type:"image", src: dbxSrc(f.e, "full"),  name: f.segs.join("/")});
+      const media = p.files.map(f => f.kind === "video"         // dir = 投稿フォルダからの相対サブフォルダ（直下は ""）
+        ? {type:"video", src: dbxSrc(f.e, "video"), name: f.segs.join("/"), dir: f.segs.slice(0, -1).join("/")}
+        : {type:"image", src: dbxSrc(f.e, "full"),  name: f.segs.join("/"), dir: f.segs.slice(0, -1).join("/")});
       const ce = pickCover(p.files.filter(f => f.kind === "image").map(f => f.e))
               || (p.files.find(f => f.kind === "video") || {}).e || null;      // 画像が無ければ動画のサムネ
       const post = {id: uniq(usedP, safeId(p.id) || "h" + fnv(c.k + "/" + p.k)),
@@ -392,8 +392,8 @@ function convert(map){
     for(const {e, kind} of c.loose){
       const name = nameOf(e), title = name.replace(/\.[^.]+$/, "") || name;
       const post = {id: uniq(usedP, safeId(e.id) || "h" + fnv(c.k + "/" + e.p)), title, date: dateOf(title, e.m),
-                    media: [kind === "video" ? {type:"video", src: dbxSrc(e, "video"), name}
-                                             : {type:"image", src: dbxSrc(e, "full"),  name}]};
+                    media: [kind === "video" ? {type:"video", src: dbxSrc(e, "video"), name, dir: ""}
+                                             : {type:"image", src: dbxSrc(e, "full"),  name, dir: ""}]};
       post.cover = dbxSrc(e, "thumb");                         // 動画もサムネを表示する
       Object.defineProperty(post, "_ce", {value: e, enumerable: false});
       posts.push(post);
@@ -497,6 +497,7 @@ function isWanted(src){
   const els = document.querySelectorAll(`[data-src="${q}"],[data-dbx-src="${q}"],[data-dbx-poster="${q}"]`);
   const vh = window.innerHeight || 800;
   for(const el of els){
+    if(!el.getClientRects().length) continue;   // 非表示（高さ0で「近い」と誤判定されるため）
     const r = el.getBoundingClientRect();
     if(r.bottom > -vh * KEEP && r.top < vh * (1 + KEEP)) return true;
   }
@@ -685,11 +686,22 @@ function publish(g, fromSync){
     if(!g.length){ renderError(`「${ROOT || "/"}」の中に表示できる画像・動画が見つかりませんでした。フォルダ構成は <クリエイター>/<投稿>/画像・動画 です。`, true); return; }
     ready = true; H.route(); return;
   }
-  if(fromSync && viewSig(old, location.hash) !== viewSig(g, location.hash)){
-    const y = window.scrollY;         // 各画面は描画時に先頭へスクロールするので、読んでいた位置に戻す
-    H.route();
-    if(y) window.scrollTo(0, y);
+  if(fromSync && viewSig(old, location.hash) !== viewSig(g, location.hash)) rerenderSoon();
+}
+// 描き直す（スクロール位置・検索語は index.html 側が画面ごとに保存・復元する）。
+// 検索欄に入力中に描き直すと iPhone のキーボードが閉じてしまうので、入力が終わってから行う
+// （blur を待つ方式だと、入力欄が画面から取り除かれた時などに発生しないことがあるので、短い間隔で確かめる）
+let rerenderTimer = 0;
+function rerenderSoon(hash){
+  clearTimeout(rerenderTimer);
+  if(hash === undefined) hash = location.hash;
+  if(location.hash !== hash) return;            // 待つ間に別の画面へ移った → その画面は新しいデータで描かれている
+  const a = document.activeElement;
+  if(a && a.tagName === "INPUT" && appEl().contains(a)){
+    rerenderTimer = setTimeout(() => rerenderSoon(hash), 500);
+    return;
   }
+  if(ready) H.route();
 }
 
 async function boot(){
@@ -793,8 +805,13 @@ function scanVideos(){
   if(!ready) return;
   const vh = window.innerHeight || 800;
   // 先に位置をまとめて測ってから変更する（測る・書き換えるを交互にしない）
-  const list = [...document.querySelectorAll("video[data-dbx-src]")].map(v => ({v, r: v.getBoundingClientRect()}));
-  for(const {v, r} of list){
+  const list = [...document.querySelectorAll("video[data-dbx-src]")]
+    .map(v => ({v, r: v.getBoundingClientRect(), shown: v.getClientRects().length > 0}));
+  for(const {v, r, shown} of list){
+    if(!shown){                                 // 検索・絞り込み・折りたたみで非表示になった動画は止めて解放する
+      if(v.getAttribute("src") || v.getAttribute("poster")){ if(!v.paused) v.pause(); releaseVideo(v); }
+      continue;
+    }
     const near = r.bottom > -vh * VIDEO_NEAR && r.top < vh * (1 + VIDEO_NEAR);
     const far  = r.bottom < -vh * VIDEO_FAR  || r.top > vh * (1 + VIDEO_FAR);
     if(near){ if(!v.getAttribute("src") && !v.dataset.pending) attachVideo(v, false); }
@@ -828,6 +845,7 @@ async function attachVideo(v, play){
 function setupVideos(){
   addEventListener("scroll", scheduleVideoScan, {passive: true});
   addEventListener("resize", scheduleVideoScan);
+  addEventListener("gallery:layout", scheduleVideoScan);   // index.html で表示/非表示が切り替わった時
   // 大きすぎて自動では読まなかった画像：タップで原寸を読み込む
   document.addEventListener("click", e => {
     const img = e.target && e.target.closest && e.target.closest(".media-box img[data-src]");

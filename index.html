@@ -94,7 +94,8 @@ a{color:inherit; text-decoration:none}
 .view > :not(.grid-creators):not(.grid-posts):not(.feed),
 .grid-creators > :nth-child(-n+12),
 .grid-posts > :nth-child(-n+12),
-.feed > :nth-child(-n+6){animation:rise .28s ease both}
+.feed > figure:nth-child(-n+6),
+.feed > .group:nth-child(-n+3) > :nth-child(-n+4){animation:rise .28s ease both}
 @keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
 @media (prefers-reduced-motion: reduce){.view,.app *{animation:none !important}}
 
@@ -183,6 +184,44 @@ img[data-src].ready{opacity:1}
 .foot{color:var(--faint); font-size:11.5px; text-align:center; padding:26px 16px}
 .foot code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
   background:var(--surface-2); padding:1px 6px; border-radius:6px}
+
+/* ---------- 検索・種類の絞り込み・フォルダの折りたたみ ---------- */
+[hidden]{display:none !important}
+.searchbar{position:relative; display:flex; align-items:center; margin:0 0 14px}
+.searchbar input{flex:1; min-width:0; height:42px; margin:0; padding:0 42px 0 38px;
+  border:1px solid var(--line-strong); border-radius:12px; background:var(--surface); color:var(--ink);
+  font:inherit; font-size:16px; -webkit-appearance:none; appearance:none;
+  transition:border-color .15s ease, box-shadow .15s ease}
+.searchbar input::placeholder{color:var(--faint)}
+.searchbar input::-webkit-search-cancel-button,
+.searchbar input::-webkit-search-decoration{-webkit-appearance:none; display:none}
+.searchbar input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-weak)}
+.searchbar .s-icon{position:absolute; left:12px; top:50%; width:17px; height:17px; margin-top:-8.5px;
+  color:var(--faint); pointer-events:none}
+.searchbar .s-clear{position:absolute; right:2px; top:50%; width:38px; height:38px; margin-top:-19px;
+  border:0; border-radius:10px; background:transparent; color:var(--muted);
+  display:inline-flex; align-items:center; justify-content:center}
+.searchbar .s-clear:active{background:var(--surface-2)}
+.empty-note{margin:8px 0 0; padding:28px 0; border:1px dashed var(--line-strong); border-radius:14px;
+  color:var(--muted); font-size:13.5px; text-align:center}
+.post-tools{display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 16px}
+.seg{display:inline-flex; gap:3px; padding:3px; border:1px solid var(--line); border-radius:12px; background:var(--surface-2)}
+.seg button{min-height:38px; padding:0 11px; border:0; border-radius:9px; background:transparent; color:var(--muted);
+  font-size:13px; font-weight:600; white-space:nowrap; transition:background .15s ease, color .15s ease}
+.seg button .n{margin-left:5px; color:var(--faint); font-weight:500; font-variant-numeric:tabular-nums}
+.seg button[aria-pressed="true"]{background:var(--surface); color:var(--ink); box-shadow:var(--shadow)}
+.seg button:disabled{opacity:.4; cursor:default}
+.fold-all{display:inline-flex; gap:6px; margin-left:auto}
+.group{display:flex; flex-direction:column; gap:12px}
+.group-head{position:sticky; top:var(--topbar-h,64px); z-index:10; display:flex; align-items:center; gap:10px;
+  width:100%; min-height:42px; margin:0; padding:8px 10px 8px 14px; border:1px solid var(--line); border-radius:12px;
+  background:var(--paper); color:var(--ink); text-align:left}
+.group-head .g-name{flex:1; min-width:0; font-size:13px; font-weight:700; letter-spacing:.02em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.group-head .g-count{font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums}
+.group-head svg{width:18px; height:18px; flex:none; color:var(--muted); transition:transform .2s ease}
+.group-head[aria-expanded="false"] svg{transform:rotate(-90deg)}
+@media (prefers-reduced-motion: reduce){.group-head svg{transition:none}}
 </style>
 </head>
 <body>
@@ -266,6 +305,12 @@ const SAMPLE=[
    ]},
 ];
 
+// 動作確認用：サンプルの1投稿の media にサブフォルダ（dir = 投稿フォルダからの相対パス。直下は ""）を付ける
+(function(){
+  const p=SAMPLE[0].posts[1], dirs=["","メイキング/線画","メイキング/線画","メイキング/塗り","動画"];
+  p.media.forEach((m,i)=>{ m.dir=dirs[i]||""; if(m.dir) m.name=m.dir+"/"+m.name; });
+})();
+
 // 実データ（window.GALLERY = data.js）があればそれを、無ければサンプルを使う
 let DATA=(window.GALLERY&&window.GALLERY.length)?window.GALLERY:SAMPLE;   // Dropboxモードでは dropbox.js が差し替える
 let ROOT_NAME=window.ROOT_NAME||"creators"; // トップ見出し = 親ディレクトリ名
@@ -300,7 +345,8 @@ function topbar({kicker,title,back,sort}){
 }
 
 function viewCreators(){
-  const cards=sortItems(DATA,c=>c.name).map(c=>{
+  const list=sortItems(DATA,c=>c.name);
+  const cards=list.map(c=>{
     const n=c.posts.length;
     return `<a class="creator-card" href="#/c/${c.id}">`+
       `<img class="creator-cover" data-src="${creatorCover(c)}" alt="" decoding="async">`+
@@ -311,16 +357,20 @@ function viewCreators(){
   }).join("");
   app.innerHTML=topbar({kicker:"My Gallery",title:ROOT_NAME,sort:true})+
     `<div class="view">`+
+      searchBar("クリエイターを検索")+
       `<p class="lede">保存済みのクリエイターを一覧表示。タップで投稿一覧へ。</p>`+
       `<div class="grid-creators">${cards}</div>`+
+      EMPTY_NOTE+
       `<div class="foot">フォルダ構成 <code>&lt;フォルダ名&gt;/&lt;クリエイター&gt;/&lt;投稿&gt;/画像・動画</code></div>`+
     `</div>`;
-  setupLazyImages();
+  setupListFilter(".creator-card", list.map(c=>c.name+" "+(c.handle||"")));
+  finishRender("list");
 }
 
 function viewPosts(cid){
   const c=findCreator(cid); if(!c){location.hash="#/"; return;}
-  const cards=sortItems(c.posts,p=>p.title).map(p=>{
+  const list=sortItems(c.posts,p=>p.title);
+  const cards=list.map(p=>{
     const vids=p.media.filter(m=>m.type==="video").length;
     const badge=vids
       ? `<span class="badge">${ICON_PLAY.replace('viewBox','style="width:11px;height:11px" viewBox')} 動画</span>`
@@ -339,24 +389,28 @@ function viewPosts(cid){
           `<div class="hn"><div class="name">${esc(c.name)}</div></div>`+
         `</div>`+
       `</div>`+
+      searchBar("投稿を検索")+   // バナーは画面の端まで広げる作りなので、検索欄はその直下に置く
       `<div class="section-label">ファイル ${c.posts.length}</div>`+
       `<div class="grid-posts">${cards}</div>`+
+      EMPTY_NOTE+
     `</div>`;
-  window.scrollTo(0,0);
-  setupLazyImages();
+  const label=app.querySelector(".section-label");
+  setupListFilter(".post-card", list.map(p=>p.title+" "+cleanTitle(p.title)+" "+p.date), n=>{label.textContent=`ファイル ${n}`;});
+  finishRender("list");
 }
 
 function viewPost(cid,pid){
   const c=findCreator(cid); if(!c){location.hash="#/"; return;}
   const p=c.posts.find(x=>x.id===pid); if(!p){location.hash="#/c/"+cid; return;}
-  const feed=p.media.map(m=>{
+  const fig=m=>{
+    const attrs=` data-type="${m.type}" data-name="${esc(m.name)}" data-dir="${esc(dirOf(m))}"`;   // 検索・種類の絞り込み・折りたたみ用
     if(m.type==="video"){
       if(m.src){ // 実データ: 再生するまで読み込まない（preload="none"）
         const vsrc=String(m.src).startsWith("dbx:")?` data-dbx-src="${esc(m.src)}"`:` src="${m.src}"`; // Dropbox: 近づいた時に dropbox.js が実URLを設定
-        return `<figure><video controls playsinline preload="none"${m.poster?` poster="${m.poster}"`:""}${vsrc}></video>`+
+        return `<figure${attrs}><video controls playsinline preload="none"${m.poster?` poster="${m.poster}"`:""}${vsrc}></video>`+
           `<figcaption>${esc(m.name)}</figcaption></figure>`;
       }
-      return `<figure><div class="media-video">`+ // サンプル: プレースホルダ
+      return `<figure${attrs}><div class="media-video">`+ // サンプル: プレースホルダ
         `<img src="${m.poster}" alt="">`+
         `<div class="play">${ICON_PLAY}</div>`+
         `<span class="vlabel">▶ 動画 ${esc(m.dur||"")}</span>`+
@@ -364,22 +418,225 @@ function viewPost(cid,pid){
     }
     // 画像: 枠だけ先に置き、近づいた時に読み込む（遠ざかると破棄してメモリを解放）
     const ar=(m.w&&m.h)?` style="aspect-ratio:${m.w}/${m.h}"`:"";
-    return `<figure><div class="media-box"${ar}>`+
+    return `<figure${attrs}><div class="media-box"${ar}>`+
       `<img data-src="${m.src}" alt="${esc(m.name)}" decoding="async">`+
     `</div><figcaption>${esc(m.name)}</figcaption></figure>`;
-  }).join("");
+  };
+  // サブフォルダ（dir）ごとにまとめる。2つ以上あるときだけ見出しを出し、直下（dir=""）は見出し無しで先頭に置く
+  const groups=new Map();
+  for(const m of p.media){ const d=dirOf(m); if(!groups.has(d)) groups.set(d,[]); groups.get(d).push(m); }
+  const useGroups=p.media.some(m=>typeof m.dir==="string") && groups.size>=2;
+  const feed=useGroups
+    ? (groups.get("")||[]).map(fig).join("")+
+      [...groups].filter(([d])=>d!=="").map(([d,ms])=>
+        `<section class="group" data-dir="${esc(d)}">`+
+          `<button type="button" class="group-head" aria-expanded="true">`+
+            `<span class="g-name">${esc(d.split("/").join(" / "))}</span>`+
+            `<span class="g-count">${ms.length}</span>${ICON_CHEVRON}`+
+          `</button>`+ms.map(fig).join("")+
+        `</section>`).join("")
+    : p.media.map(fig).join("");
+  const nImg=p.media.filter(m=>m.type==="image").length, nVid=p.media.filter(m=>m.type==="video").length;
+  const seg=(t,label,n)=>`<button type="button" data-type="${t}" aria-pressed="false"${n?"":" disabled"}>${label}<span class="n">${n}</span></button>`;
   app.innerHTML=topbar({kicker:c.name,title:cleanTitle(p.title),back:"#/c/"+c.id})+
     `<div class="view">`+
+      searchBar("ファイル名を検索")+
+      `<div class="post-tools">`+
+        `<div class="seg" role="group" aria-label="種類で絞り込み">`+
+          seg("all","すべて",p.media.length)+seg("image","画像",nImg)+seg("video","動画",nVid)+
+        `</div>`+
+        (useGroups?`<div class="fold-all">`+
+          `<button type="button" class="sort-btn" data-fold="open">すべて開く</button>`+
+          `<button type="button" class="sort-btn" data-fold="close">すべて閉じる</button></div>`:"")+
+      `</div>`+
       `<div class="post-head"><h2>${esc(cleanTitle(p.title))}</h2>`+
         `<div class="post-byline">`+
           `<b>${esc(c.name)}</b><span class="sep">•</span>`+
           `<span style="font-variant-numeric:tabular-nums">${esc(p.date)}</span></div>`+
       `</div>`+
       `<div class="feed">${feed}</div>`+
+      EMPTY_NOTE+
       `<p class="count-note">— ${totalMedia(p)} 点のメディア —</p>`+
     `</div>`;
-  window.scrollTo(0,0);
+  setupPostFilter();
+  finishRender("post");
+}
+
+/* ---------- 画面ごとの状態（スクロール位置・検索語・種類の絞り込み） ----------
+   location.hash ごとに保存する。sessionStorage にも書くので、再読み込みしても戻る。 */
+const RESTORE_POST_SCROLL=true;   // 投稿の中を前回の位置から再開するか（一覧は常に復元）
+const SS_VIEW="gallery-view-state", LS_FOLD="gallery-collapsed";
+const viewState=(()=>{try{return new Map(JSON.parse(sessionStorage.getItem(SS_VIEW)||"[]"));}catch(e){return new Map();}})();
+const viewKey=()=>"#/"+location.hash.replace(/^#\/?/,"");
+let currentKey=null, stateTimer=0, pin=null;
+try{history.scrollRestoration="manual";}catch(e){}   // ブラウザ自身の位置復元と競合させない
+function stateOf(key){
+  let s=viewState.get(key);
+  if(!s){ s={}; viewState.set(key,s); if(viewState.size>300) viewState.delete(viewState.keys().next().value); }
+  return s;
+}
+function saveViewState(now){
+  clearTimeout(stateTimer);
+  const write=()=>{try{sessionStorage.setItem(SS_VIEW,JSON.stringify([...viewState]));}catch(e){}};
+  if(now) write(); else stateTimer=setTimeout(write,300);
+}
+function rememberScroll(){   // スクロール中に今の画面の位置を記録（復元の途中は目標位置を守るため記録しない）
+  if(!currentKey||pin) return;
+  stateOf(currentKey).y=Math.round(window.scrollY);
+  saveViewState();
+}
+addEventListener("pagehide",()=>{rememberScroll(); saveViewState(true);});
+
+// 目標位置へ移動し、ユーザーが触るまではレイアウトが変わるたびに再適用する（最大20回・3秒）
+function cancelPin(){ if(!pin) return; if(pin.ro) pin.ro.disconnect(); clearTimeout(pin.t); pin=null; }
+function restoreScroll(y){
+  cancelPin();
+  window.scrollTo(0,y);
+  if(!y) return;
+  const p=pin={y,n:0};
+  p.t=setTimeout(()=>{if(pin===p) cancelPin();},3000);
+  if(window.ResizeObserver){
+    p.ro=new ResizeObserver(()=>{
+      if(pin!==p) return;
+      if(++p.n>20){ cancelPin(); return; }
+      if(Math.abs(window.scrollY-p.y)>1){ window.scrollTo(0,p.y); measureLazy(); updateLazy(); }
+    });
+    p.ro.observe(app);
+  }
+}
+for(const t of ["touchstart","wheel","keydown","mousedown"]) addEventListener(t,cancelPin,{capture:true,passive:true});
+
+function setTopbarHeight(){   // フォルダ見出しの sticky 位置 = topbar の高さ（セーフエリア込み）
+  const t=app.querySelector(".topbar");
+  if(t) app.style.setProperty("--topbar-h",t.getBoundingClientRect().height+"px");
+}
+addEventListener("resize",setTopbarHeight);
+function notifyLayout(){ try{window.dispatchEvent(new Event("gallery:layout"));}catch(e){} }   // dropbox.js が動画の判定をやり直す
+function relayout(){ measureLazy(); updateLazy(); notifyLayout(); }   // 表示/非表示を切り替えたら位置を測り直す
+// 描画の最後：検索・絞り込み・開閉の状態を反映した後で位置を復元し、遅延読み込みを始める
+function finishRender(kind){
+  currentKey=viewKey();
+  setTopbarHeight();
+  const st=viewState.get(currentKey);
+  restoreScroll(kind==="post"&&!RESTORE_POST_SCROLL?0:((st&&st.y)||0));
   setupLazyImages();
+  notifyLayout();
+}
+
+/* ---------- 検索 ---------- */
+// 大文字小文字・全角半角・ひらがな/カタカナの違いを無視する（NFKC + 小文字化 + カタカナをひらがなに）
+const normText=s=>String(s||"").normalize("NFKC").toLowerCase().replace(/[ァ-ヶ]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0x60));
+const termsOf=q=>normText(q).split(/\s+/).filter(Boolean);
+const matchAll=(hay,terms)=>terms.every(t=>hay.includes(t));   // スペース区切りは AND
+const ICON_SEARCH='<svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>';
+const ICON_X='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const ICON_CHEVRON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+const EMPTY_NOTE='<p class="empty-note" hidden>見つかりませんでした</p>';
+function searchBar(placeholder){
+  const q=(viewState.get(viewKey())||{}).q||"";
+  return `<div class="searchbar" role="search">${ICON_SEARCH}`+
+    `<input type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"`+
+      ` placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" value="${esc(q)}">`+
+    `<button type="button" class="s-clear" aria-label="検索語を消す"${q?"":" hidden"}>${ICON_X}</button></div>`;
+}
+// 入力のたびに描き直さず（iOS で入力欄のフォーカスが外れるため）、onChange で表示/非表示だけを切り替える
+function bindSearch(key,onChange){
+  const box=app.querySelector(".searchbar"); if(!box) return;
+  const input=box.querySelector("input"), clear=box.querySelector(".s-clear");
+  let t=0;
+  const commit=()=>{clearTimeout(t); stateOf(key).q=input.value; saveViewState(); clear.hidden=!input.value; onChange();};
+  input.addEventListener("input",()=>{clear.hidden=!input.value; clearTimeout(t); t=setTimeout(commit,150);});
+  input.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault(); commit(); input.blur();}});
+  clear.addEventListener("click",()=>{input.value=""; commit();});
+}
+// 一覧（クリエイター・投稿）の絞り込み
+function setupListFilter(selector,texts,onCount){
+  const key=viewKey(), els=[...app.querySelectorAll(selector)], hays=texts.map(normText), empty=app.querySelector(".empty-note");
+  const apply=()=>{
+    const terms=termsOf((viewState.get(key)||{}).q);
+    let n=0;
+    els.forEach((el,i)=>{const ok=matchAll(hays[i],terms); el.hidden=!ok; if(ok) n++;});
+    empty.hidden=n>0;
+    if(onCount) onCount(n);
+  };
+  apply();
+  bindSearch(key,()=>{apply(); relayout();});
+}
+
+/* ---------- 投稿内：ファイル名の検索・種類の絞り込み・フォルダの折りたたみ ---------- */
+const dirOf=m=>typeof m.dir==="string"?m.dir:"";
+function loadFold(key){
+  try{const o=JSON.parse(localStorage.getItem(LS_FOLD)||"{}"); return Array.isArray(o[key])?o[key]:[];}catch(e){return [];}
+}
+function saveFold(key,set){
+  try{
+    const o=JSON.parse(localStorage.getItem(LS_FOLD)||"{}")||{};
+    if(set.size) o[key]=[...set]; else delete o[key];
+    localStorage.setItem(LS_FOLD,JSON.stringify(o));
+  }catch(e){}
+}
+// el の画面上の位置を変えずに fn を実行する（開閉でスクロール位置が飛ばないように）
+function keepPosition(el,fn){
+  const before=el.getBoundingClientRect().top; fn();
+  const d=el.getBoundingClientRect().top-before;
+  if(Math.abs(d)>.5) window.scrollBy(0,d);
+}
+function setupPostFilter(){
+  const key=viewKey();
+  const figs=[...app.querySelectorAll(".feed figure[data-type]")], hays=figs.map(f=>normText(f.dataset.name));
+  const groups=[...app.querySelectorAll(".feed .group")];
+  for(const g of groups){ g._figs=[...g.querySelectorAll("figure[data-type]")]; g._head=g.querySelector(".group-head"); }
+  const loose=figs.filter(f=>!f.closest(".group"));
+  const typeBtns=[...app.querySelectorAll(".seg button")];
+  const countNote=app.querySelector(".count-note"), empty=app.querySelector(".empty-note");
+  const saved=new Set(loadFold(key));   // 閉じているフォルダ（投稿ごとに保存。既定は全部開く）
+  let temp=new Set(), lastSig=null;     // 検索・絞り込み中だけの開閉（保存しない）
+  const cond=()=>{
+    const s=viewState.get(key)||{}, terms=termsOf(s.q);
+    let type=s.type||"all";
+    const b=typeBtns.find(x=>x.dataset.type===type); if(!b||b.disabled) type="all";
+    return {terms,type,filtering:terms.length>0||type!=="all"};
+  };
+  const apply=()=>{
+    const {terms,type,filtering}=cond(), sig=terms.join(" ")+"|"+type;
+    if(sig!==lastSig){ temp=new Set(); lastSig=sig; }   // 条件が変わったら、該当があるグループはすべて開いた状態から
+    let total=0;
+    figs.forEach((f,i)=>{ f._ok=(type==="all"||f.dataset.type===type)&&matchAll(hays[i],terms); if(f._ok) total++; });
+    for(const f of loose) f.hidden=!f._ok;
+    for(const g of groups){
+      const n=g._figs.filter(f=>f._ok).length, open=filtering?!temp.has(g.dataset.dir):!saved.has(g.dataset.dir);
+      g.hidden=n===0;                       // 該当が無いグループは見出しごと隠す
+      g._head.setAttribute("aria-expanded",open?"true":"false");
+      g._head.querySelector(".g-count").textContent=filtering?`${n} / ${g._figs.length}`:String(g._figs.length);
+      for(const f of g._figs) f.hidden=!open||!f._ok;
+    }
+    for(const b of typeBtns) b.setAttribute("aria-pressed",b.dataset.type===type?"true":"false");
+    countNote.textContent=`— ${total} 点のメディア —`;
+    empty.hidden=total>0;
+  };
+  apply();
+  bindSearch(key,()=>{apply(); relayout();});
+  for(const b of typeBtns) b.addEventListener("click",()=>{
+    if(b.disabled) return;
+    stateOf(key).type=b.dataset.type; saveViewState(); apply(); relayout();
+  });
+  const setOpen=(dirs,close,anchor)=>{
+    const {filtering}=cond(), set=filtering?temp:saved;
+    for(const d of dirs){ if(close) set.add(d); else set.delete(d); }
+    if(!filtering) saveFold(key,saved);
+    if(anchor) keepPosition(anchor,apply); else apply();
+    relayout();
+  };
+  app.querySelector(".feed").addEventListener("click",e=>{
+    const h=e.target.closest(".group-head"); if(!h) return;
+    setOpen([h.closest(".group").dataset.dir], h.getAttribute("aria-expanded")==="true", h);
+  });
+  for(const b of app.querySelectorAll("[data-fold]")) b.addEventListener("click",()=>{
+    // 画面上で最初に見えている見出しを基準に、位置が飛ばないようにする
+    const top=parseFloat(app.style.getPropertyValue("--topbar-h"))||0;
+    const anchor=groups.filter(g=>!g.hidden).map(g=>g._head).find(h=>h.getBoundingClientRect().bottom>top);
+    setOpen(groups.map(g=>g.dataset.dir), b.dataset.fold==="close", anchor);
+  });
 }
 
 /* ---------- 画像の遅延読み込み / 破棄 ----------
@@ -421,10 +678,13 @@ function lazyUnload(img){
 // 各画像の位置を一度だけ測って記憶する（枠サイズは読み込み状態に左右されないので測り直し不要）
 function measureLazy(){
   const y=window.scrollY;
-  lazyItems=[...document.querySelectorAll("img[data-src]")].map(img=>{
+  lazyItems=[];
+  for(const img of document.querySelectorAll("img[data-src]")){
+    // 検索・絞り込み・折りたたみで非表示の画像は高さ0で「近い」と誤判定されるので対象外。読み込み済みなら解放する
+    if(!img.getClientRects().length){ lazyUnload(img); continue; }
     const r=img.getBoundingClientRect();
-    return {img, top:r.top+y, bottom:r.top+y+r.height};
-  });
+    lazyItems.push({img, top:r.top+y, bottom:r.top+y+r.height});
+  }
 }
 function updateLazy(){
   if(!lazyItems.length) return;
@@ -444,7 +704,7 @@ function setupLazyImages(){
 addEventListener("scroll",()=>{
   if(lazyTick) return;
   lazyTick=true;
-  requestAnimationFrame(()=>{lazyTick=false; updateLazy();});
+  requestAnimationFrame(()=>{lazyTick=false; updateLazy(); rememberScroll();});
 },{passive:true});
 addEventListener("resize",()=>{measureLazy(); updateLazy();});
 
@@ -464,6 +724,8 @@ function toggleTheme(){
 
 /* ---------- router ---------- */
 function route(){
+  if(currentKey&&!pin){ stateOf(currentKey).y=Math.round(window.scrollY); saveViewState(); }   // 離れる画面の位置を保存
+  cancelPin();
   lazyItems=[];   // 画面を離れたら前の画面の監視対象を捨てる
   const h=location.hash.replace(/^#\/?/,"");
   const parts=h.split("/").filter(Boolean);
