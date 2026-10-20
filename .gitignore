@@ -1,0 +1,13 @@
+# 実データ由来のファイル（ファイル名・フォルダ名・パスの一覧を含む）はコミットしない
+data.js
+data.json
+*.data.js
+creators/
+media/
+*.local.js
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

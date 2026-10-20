@@ -183,6 +183,8 @@ img[data-src].ready{opacity:1}
 
 <!-- 実データがあれば data.js（build.py が生成）を読み込む。無ければ下のサンプルで動く -->
 <script src="data.js"></script>
+<!-- Dropbox から読み込む場合は dropbox.js の DROPBOX_APP_KEY を設定する（空なら何もしない） -->
+<script src="dropbox.js"></script>
 <script>
 /* =====================================================================
    データモデル = フォルダ構造そのもの
@@ -258,8 +260,8 @@ const SAMPLE=[
 ];
 
 // 実データ（window.GALLERY = data.js）があればそれを、無ければサンプルを使う
-const DATA=(window.GALLERY&&window.GALLERY.length)?window.GALLERY:SAMPLE;
-const ROOT_NAME=window.ROOT_NAME||"creators"; // トップ見出し = 親ディレクトリ名
+let DATA=(window.GALLERY&&window.GALLERY.length)?window.GALLERY:SAMPLE;   // Dropboxモードでは dropbox.js が差し替える
+let ROOT_NAME=window.ROOT_NAME||"creators"; // トップ見出し = 親ディレクトリ名
 const totalMedia=p=>p.media.length;
 
 /* ---------- routing ---------- */
@@ -324,7 +326,7 @@ function viewPosts(cid){
   app.innerHTML=topbar({kicker:"",title:c.name,back:"#/",sort:true})+
     `<div class="view">`+
       `<div class="creator-hero">`+
-        `<img class="banner" src="${creatorCover(c)}" alt="">`+
+        `<img class="banner" ${String(creatorCover(c)).startsWith("dbx:")?"data-src":"src"}="${creatorCover(c)}" alt="">`+
         `<div class="scrim"></div>`+
         `<div class="hero-body">`+
           `<div class="hn"><div class="name">${esc(c.name)}</div></div>`+
@@ -343,7 +345,8 @@ function viewPost(cid,pid){
   const feed=p.media.map(m=>{
     if(m.type==="video"){
       if(m.src){ // 実データ: 再生するまで読み込まない（preload="none"）
-        return `<figure><video controls playsinline preload="none"${m.poster?` poster="${m.poster}"`:""} src="${m.src}"></video>`+
+        const vsrc=String(m.src).startsWith("dbx:")?` data-dbx-src="${esc(m.src)}"`:` src="${m.src}"`; // Dropbox: 近づいた時に dropbox.js が実URLを設定
+        return `<figure><video controls playsinline preload="none"${m.poster?` poster="${m.poster}"`:""}${vsrc}></video>`+
           `<figcaption>${esc(m.name)}</figcaption></figure>`;
       }
       return `<figure><div class="media-video">`+ // サンプル: プレースホルダ
@@ -379,13 +382,27 @@ let lazyItems=[], lazyTick=false;
 const LOAD_SCREENS=1.5;   // 画面の何倍まで近づいたら読み込むか
 const KEEP_SCREENS=4;     // 画面の何倍まで離れたら破棄するか（読み込み範囲より広く）
 
-function lazyLoad(img){
+async function lazyLoad(img){
   if(img.getAttribute("src")) return;
   const box=img.closest(".media-box");
+  let url=img.dataset.src;
+  if(url.startsWith("dbx:")){            // Dropbox: 擬似URLを表示直前に実URLへ解決する
+    if(img.dataset.pending) return;      // 解決待ちの間はスクロールのたびに重複して呼ばない
+    img.dataset.pending="1";
+    if(box) box.classList.add("loading");
+    try{ url=await window.resolveSrc(url); }catch(e){ url=null; }
+    delete img.dataset.pending;
+    // 待っている間に画面遷移・スクロールで破棄範囲に出ていたら（lazyUnload 相当）、古い結果で上書きしない
+    const it=lazyItems.find(x=>x.img===img), vh=window.innerHeight||800, y=window.scrollY;
+    if(!url||!it||img.getAttribute("src")||it.bottom<y-vh*KEEP_SCREENS||it.top>y+vh*(1+KEEP_SCREENS)){
+      if(box&&!img.getAttribute("src")) box.classList.remove("loading");
+      return;
+    }
+  }
   if(box) box.classList.add("loading");
   img.onload =()=>{if(box)box.classList.remove("loading"); img.classList.add("ready");};
   img.onerror=()=>{if(box)box.classList.remove("loading");};
-  img.src=img.dataset.src;
+  img.src=url;
 }
 function lazyUnload(img){
   if(!img.getAttribute("src")) return;
@@ -448,7 +465,9 @@ function route(){
   return viewCreators();
 }
 addEventListener("hashchange",route);
-route();
+// Dropboxモード（dropbox.js に App key あり）は「認証 → キャッシュ表示 → 更新」の流れの中で route() する
+if(window.DBX) window.DBX.start({setData:(d,name)=>{DATA=d; if(name) ROOT_NAME=name;}, route});
+else route();
 </script>
 </body>
 </html>
