@@ -303,7 +303,9 @@ async function fullFetch(onProgress){
    <ROOT>/<クリエイター>/<投稿>/... 。投稿より深いファイルは投稿にまとめる
    ===================================================================== */
 function mediaKind(p){ const x = extOf(p); return IMG_EXT.has(x) ? "image" : VID_EXT.has(x) ? "video" : ""; }
-const thumbable = e => THUMB_EXT.has(extOf(e.p)) && (e.s || 0) <= THUMB_MAX_BYTES;
+// 動画は公式ドキュメントに無いが、実際には get_thumbnail で静止画が返る（画像の20MB制限もかからない）
+const isVideoPath = p => VID_EXT.has(extOf(p));
+const thumbable = e => isVideoPath(e.p) || (THUMB_EXT.has(extOf(e.p)) && (e.s || 0) <= THUMB_MAX_BYTES);
 const isCoverName = e => /^cover\.[^.]+$/i.test(nameOf(e));
 // 擬似URL。パスは属性に安全に入るようエンコードする（サムネ非対応の画像は原寸 #orig）
 function dbxSrc(e, kind){
@@ -376,7 +378,8 @@ function convert(map){
       const media = p.files.map(f => f.kind === "video"
         ? {type:"video", src: dbxSrc(f.e, "video"), name: f.segs.join("/")}
         : {type:"image", src: dbxSrc(f.e, "full"),  name: f.segs.join("/")});
-      const ce = pickCover(p.files.filter(f => f.kind === "image").map(f => f.e));
+      const ce = pickCover(p.files.filter(f => f.kind === "image").map(f => f.e))
+              || (p.files.find(f => f.kind === "video") || {}).e || null;      // 画像が無ければ動画のサムネ
       const post = {id: uniq(usedP, safeId(p.id) || "h" + fnv(c.k + "/" + p.k)),
                     title: p.name, date: dateOf(p.name, p.files[0].e.m), media};
       if(ce) post.cover = dbxSrc(ce, "thumb");
@@ -389,8 +392,8 @@ function convert(map){
       const post = {id: uniq(usedP, safeId(e.id) || "h" + fnv(c.k + "/" + e.p)), title, date: dateOf(title, e.m),
                     media: [kind === "video" ? {type:"video", src: dbxSrc(e, "video"), name}
                                              : {type:"image", src: dbxSrc(e, "full"),  name}]};
-      if(kind === "image") post.cover = dbxSrc(e, "thumb");
-      Object.defineProperty(post, "_ce", {value: kind === "image" ? e : null, enumerable: false});
+      post.cover = dbxSrc(e, "thumb");                         // 動画もサムネを表示する
+      Object.defineProperty(post, "_ce", {value: e, enumerable: false});
       posts.push(post);
     }
     if(!posts.length) continue;
@@ -489,7 +492,7 @@ function b64ToBytes(b64){
 // その画像・動画の要素がまだ画面の近く（破棄範囲の内側）にあるか
 function isWanted(src){
   const q = window.CSS && CSS.escape ? CSS.escape(src) : src.replace(/["\\]/g, "\\$&");
-  const els = document.querySelectorAll(`[data-src="${q}"],[data-dbx-src="${q}"]`);
+  const els = document.querySelectorAll(`[data-src="${q}"],[data-dbx-src="${q}"],[data-dbx-poster="${q}"]`);
   const vh = window.innerHeight || 800;
   for(const el of els){
     const r = el.getBoundingClientRect();
@@ -542,6 +545,11 @@ function sendThumbs(kind, chunk){
     .catch(err => chunk.forEach(it => it.rej(err instanceof ApiError && err.status === 409 ? new ThumbFail() : err)));
 }
 
+// 動画のサムネが取れなかった時の枠（▶ マーク）
+const VIDEO_PLACEHOLDER = "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="#241f1b"/>'+
+  '<circle cx="160" cy="90" r="30" fill="none" stroke="#a79e93" stroke-width="3"/><path d="M151 75v30l26-15z" fill="#a79e93"/></svg>');
+
 // 大きすぎる原寸ファイルの代わりに出す枠（タップで原寸を読み込む）
 const origSize = path => { const e = entryMap && entryMap.get(path); return (e && e.s) || 0; };
 const tapped = new Set();
@@ -557,7 +565,9 @@ function resolveSrc(src){
   src = String(src);
   if(!src.startsWith("dbx:")) return Promise.resolve(src);
   const {path, kind} = parseSrc(src);
-  const useLink = !blobs[kind] || (kind === "full" && FULL_RES) || noThumb.has(path);
+  const vthumb = isVideoPath(path) && kind !== "video";        // 動画のサムネ（静止画）
+  if(vthumb && noThumb.has(path)) return Promise.resolve(VIDEO_PLACEHOLDER);
+  const useLink = !vthumb && (!blobs[kind] || (kind === "full" && FULL_RES) || noThumb.has(path));
   if(useLink){
     const c = links.get(src);
     if(c && c.exp - Date.now() > LINK_MARGIN) return Promise.resolve(c.url);
@@ -574,12 +584,15 @@ function resolveSrc(src){
   };
   const p = (useLink ? viaLink() :
     thumbnail(src, path, kind).then(bytes => {
-      learnDims(path, jpegSize(bytes));
+      if(!vthumb) learnDims(path, jpegSize(bytes));
       const url = URL.createObjectURL(new Blob([bytes], {type: "image/jpeg"}));
       cacheBlob(kind, src, url);
       return url;
     }).catch(e => {
-      if(e instanceof ThumbFail){ noThumb.add(path); return viaLink(); }   // HEIC・巨大ファイルなど → 原寸
+      if(e instanceof ThumbFail){                                  // HEIC・巨大ファイルなど → 原寸
+        noThumb.add(path);
+        return vthumb ? VIDEO_PLACEHOLDER : viaLink();             // 動画は本体を画像として読まない
+      }
       throw e;
     })
   ).finally(() => inflight.delete(src));
@@ -780,16 +793,25 @@ function scanVideos(){
     const near = r.bottom > -vh * VIDEO_NEAR && r.top < vh * (1 + VIDEO_NEAR);
     const far  = r.bottom < -vh * VIDEO_FAR  || r.top > vh * (1 + VIDEO_FAR);
     if(near){ if(!v.getAttribute("src") && !v.dataset.pending) attachVideo(v, false); }
-    else if(far && v.getAttribute("src") && v.paused) releaseVideo(v);   // 再生中のものは外さない
+    else if(far && v.paused && (v.getAttribute("src") || v.getAttribute("poster"))) releaseVideo(v);   // 再生中のものは外さない
   }
 }
 function releaseVideo(v){
+  v.removeAttribute("poster");
   v.removeAttribute("src");
   delete v.dataset.retried;
   try{ v.load(); }catch(e){}   // 読み込んだデータとデコーダを手放す
 }
 async function attachVideo(v, play){
   v.dataset.pending = "1";
+  // サムネ（静止画）を poster に。動画本体より先に見えるよう並行して取りに行く
+  const psrc = v.dataset.dbxSrc.replace(/#video$/, "#cover");
+  if(!v.getAttribute("poster")){
+    v.dataset.dbxPoster = psrc;
+    resolveSrc(psrc).then(u => {
+      if(v.isConnected && v.dataset.dbxPoster === psrc && !v.getAttribute("poster")) v.poster = u;
+    }).catch(() => {});
+  }
   try{
     const url = await resolveSrc(v.dataset.dbxSrc);
     if(!v.isConnected || v.getAttribute("src")) return;
