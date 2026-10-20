@@ -22,7 +22,7 @@ const TOKEN_URL     = "https://api.dropboxapi.com/oauth2/token";
 const LS_AUTH = "dbx-auth";         // トークン（localStorage のみ）
 const LS_PKCE = "dbx-pkce";         // 認証中だけ使う一時データ
 const DB_NAME = "dbx-gallery";
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;            // 2: 生の一覧だけを保存（変換結果は起動時に作る）
 
 const ROOT = normRoot(ROOT_PATH);
 const ROOT_LABEL = ROOT ? ROOT.split("/").pop() : "Dropbox";
@@ -32,16 +32,24 @@ const VID_EXT   = new Set(["mp4","mov","m4v","webm"]);
 const THUMB_EXT = new Set(["jpg","jpeg","png","tiff","tif","gif","webp","ppm","bmp"]); // サムネイルAPIの対応形式
 const THUMB_MAX_BYTES = 20*1024*1024;                                                  // これより大きい写真はサムネ不可
 
+// iPhone・iPad などタッチ操作が主の端末は、使えるメモリが少ないので投稿内の画像を小さめにする
+const MOBILE = !!((window.matchMedia && matchMedia("(pointer: coarse)").matches) || navigator.maxTouchPoints > 1);
 // 擬似URLの種類ごとのサムネイル設定（cap = Blob URL を保持する上限。超えたら古い順に解放）
 const SIZES = {
   thumb: {size:"w640h480",   mode:"fitone_bestfit", batch:25, cap:400}, // 投稿カード（正方形に切り抜いて表示）
   cover: {size:"w1024h768",  mode:"fitone_bestfit", batch:25, cap:60 }, // クリエイターカード・バナー
-  full:  {size:"w2048h1536", mode:"bestfit",        batch:5,  cap:40 }, // 投稿内の画像（1枚が重いので少なめにまとめる）
+  full:  MOBILE                                                          // 投稿内の画像（1枚が重いので少なめにまとめる）
+         ? {size:"w1024h768",  mode:"bestfit", batch:5, cap:30}           //   iPhone等：画面幅に十分で、メモリは約1/4
+         : {size:"w2048h1536", mode:"bestfit", batch:5, cap:40},
 };
 const LINK_TTL    = 4*3600e3;   // temporary link の有効期限（約4時間）
 const LINK_MARGIN = 10*60e3;    // 期限の10分前には取り直す
 const SYNC_INTERVAL = 10*60e3;  // アプリに戻った時、前回同期から10分以上たっていれば差分を取りにいく
-const NEAR = 1.5;               // 動画は画面の何倍まで近づいたら URL を用意するか（画像の LOAD_SCREENS と同じ）
+const KEEP = 4;                 // index.html の KEEP_SCREENS と同じ。これより遠い画像・動画の要求は送る前に取り消す
+const VIDEO_NEAR = 1;           // 動画は画面の±1画面以内に入ったら URL を入れる
+const VIDEO_FAR  = 2.5;         // ±2.5画面より離れた停止中の動画は URL を外してメモリを解放する
+const ORIG_AUTO_MAX = 15*1024*1024;  // サムネを作れない原寸ファイルがこれより大きければ、自動では読まずタップで表示
+const MAX_THUMB_REQ = 2;        // get_thumbnail_batch の同時実行数
 
 const ICON_LOGOUT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>';
 
@@ -51,6 +59,7 @@ const MSG_EXPIRED = "Dropbox との接続が切れました。もう一度接続
 class AuthError extends Error{}
 class UserError extends Error{}
 class ThumbFail extends Error{}
+class Cancelled extends Error{}   // 画面から離れたので送らなかった要求
 class ApiError extends Error{
   constructor(status, body){ super("Dropbox API " + status); this.status = status; this.body = body; }
 }
@@ -157,21 +166,22 @@ async function getToken(force){
 /* =====================================================================
    API 呼び出し（並列数の制限・429 / 5xx の再試行・401 の自動更新）
    ===================================================================== */
-function limiter(n, lifo){
+function limiter(n){
   let active = 0; const q = [];
   const next = () => {
     if(active >= n || !q.length) return;
     active++;
-    const job = lifo ? q.pop() : q.shift();   // サムネは新しい要求（＝今見ている場所）を優先
+    const job = q.shift();
     job.fn().then(job.res, job.rej).finally(() => { active--; next(); });
   };
   return fn => new Promise((res, rej) => { q.push({fn, res, rej}); next(); });
 }
-const rpcLimit     = limiter(3, false);
-const contentLimit = limiter(2, true);
+const rpcLimit = limiter(3);
 
-function call(host, endpoint, args, limit){
+const direct = fn => fn();
+function call(host, endpoint, args, limit, pre){
   return (limit || rpcLimit)(async () => {
+    if(pre && !pre()) throw new Cancelled();   // 順番待ちの間に不要になっていたら送らない
     let tries = 0, refreshed = false;
     for(;;){
       const token = await getToken(false);
@@ -264,7 +274,7 @@ function applyEntry(map, e){
   }else if(tag === "folder"){
     map.set(p, {t:"d", p, d: e.path_display || p, id: e.id || ""});
   }else if(tag === "file"){
-    if(mediaKind(p)) map.set(p, {t:"f", p, d: e.path_display || p, n: e.name, m: e.client_modified || e.server_modified || "", s: e.size || 0});
+    if(mediaKind(p)) map.set(p, {t:"f", p, d: e.path_display || p, n: e.name, m: e.client_modified || e.server_modified || "", s: e.size || 0, id: e.id || ""});
     else map.delete(p);
   }
 }
@@ -325,7 +335,7 @@ function convert(map){
   // path_display は最後の要素以外の大文字小文字が正確とは限らないので、名前はフォルダ自身のエントリを優先する
   const getC = (k, name, own) => {
     let c = creators.get(k);
-    if(!c){ c = {k, name, own:false, id:"", direct:[], posts:new Map()}; creators.set(k, c); }
+    if(!c){ c = {k, name, own:false, id:"", direct:[], loose:[], posts:new Map()}; creators.set(k, c); }
     if(own && !c.own){ c.name = name; c.own = true; }
     return c;
   };
@@ -349,7 +359,11 @@ function convert(map){
     const kind = mediaKind(e.p);
     if(!kind || low.length < 2) continue;                     // ルート直下のファイルは対象外
     const c = getC(low[0], disp[0], false);
-    if(low.length === 2){ if(kind === "image") c.direct.push(e); continue; }   // クリエイター直下 = カバー候補
+    if(low.length === 2){                                       // クリエイター直下のファイル
+      if(kind === "image") c.direct.push(e);                    //   画像はカバーの候補
+      if(!(kind === "image" && isCoverName(e))) c.loose.push({e, kind});   //   cover.* 以外は 1ファイル = 1投稿
+      continue;
+    }
     getP(c, low[1], disp[1], false).files.push({e, kind, segs: disp.slice(2)});
   }
 
@@ -367,6 +381,16 @@ function convert(map){
                     title: p.name, date: dateOf(p.name, p.files[0].e.m), media};
       if(ce) post.cover = dbxSrc(ce, "thumb");
       Object.defineProperty(post, "_ce", {value: ce, enumerable: false});   // カバー決定用（保存・比較には含めない）
+      posts.push(post);
+    }
+    // クリエイター直下のファイルは、それぞれを1つの投稿として扱う（タイトルは拡張子を除いたファイル名）
+    for(const {e, kind} of c.loose){
+      const name = nameOf(e), title = name.replace(/\.[^.]+$/, "") || name;
+      const post = {id: uniq(usedP, safeId(e.id) || "h" + fnv(c.k + "/" + e.p)), title, date: dateOf(title, e.m),
+                    media: [kind === "video" ? {type:"video", src: dbxSrc(e, "video"), name}
+                                             : {type:"image", src: dbxSrc(e, "full"),  name}]};
+      if(kind === "image") post.cover = dbxSrc(e, "thumb");
+      Object.defineProperty(post, "_ce", {value: kind === "image" ? e : null, enumerable: false});
       posts.push(post);
     }
     if(!posts.length) continue;
@@ -449,9 +473,6 @@ const links = new Map();      // src → {url, exp}
 const inflight = new Map();   // src → Promise（同じ画像の重複要求をまとめる）
 const noThumb = new Set();    // サムネ取得に失敗したパス（以後は temporary link）
 
-function tempLink(path){
-  return call(API, "files/get_temporary_link", {path}).then(j => j.link);
-}
 function cacheBlob(kind, src, url){
   const m = blobs[kind]; m.set(src, url);
   while(m.size > SIZES[kind].cap){
@@ -465,34 +486,71 @@ function b64ToBytes(b64){
   return u;
 }
 
-// 20ms のあいだに来た要求をまとめて 1 回の get_thumbnail_batch にする
-const batchQ = {};
-function thumbnail(path, kind){
-  const cfg = SIZES[kind];
+// その画像・動画の要素がまだ画面の近く（破棄範囲の内側）にあるか
+function isWanted(src){
+  const q = window.CSS && CSS.escape ? CSS.escape(src) : src.replace(/["\\]/g, "\\$&");
+  const els = document.querySelectorAll(`[data-src="${q}"],[data-dbx-src="${q}"]`);
+  const vh = window.innerHeight || 800;
+  for(const el of els){
+    const r = el.getBoundingClientRect();
+    if(r.bottom > -vh * KEEP && r.top < vh * (1 + KEEP)) return true;
+  }
+  return false;
+}
+
+// 要求は種類ごとに溜めておき、通信の枠が空いた時に「新しい要求から」最大 batch 件をまとめて送る。
+// 送る直前に画面から離れていた要求は取り消す（素早いスクロールで通り過ぎた画像を取りに行かない）
+let seq = 0, activeThumb = 0, pumpTimer = 0;
+const thumbQ = {thumb: [], cover: [], full: []};
+function thumbnail(src, path, kind){
   return new Promise((res, rej) => {
-    const q = batchQ[kind] || (batchQ[kind] = {items: [], timer: 0});
-    q.items.push({path, res, rej});
-    if(q.items.length >= cfg.batch) flushBatch(kind);
-    else if(!q.timer) q.timer = setTimeout(() => flushBatch(kind), 20);
+    thumbQ[kind].push({src, path, res, rej, seq: ++seq});
+    if(!pumpTimer) pumpTimer = setTimeout(pump, 20);
   });
 }
-function flushBatch(kind){
-  const q = batchQ[kind], cfg = SIZES[kind];
-  clearTimeout(q.timer); q.timer = 0;
-  while(q.items.length){
-    const chunk = q.items.splice(0, cfg.batch);
-    call(CONTENT, "files/get_thumbnail_batch",
-         {entries: chunk.map(it => ({path: it.path, format: "jpeg", size: cfg.size, mode: cfg.mode}))}, contentLimit)
-      .then(j => {
-        const list = (j && j.entries) || [];
-        chunk.forEach((it, i) => {
-          const e = list[i];
-          if(e && e[".tag"] === "success" && e.thumbnail) it.res(b64ToBytes(e.thumbnail));
-          else it.rej(new ThumbFail());
-        });
-      })
-      .catch(err => chunk.forEach(it => it.rej(err instanceof ApiError && err.status === 409 ? new ThumbFail() : err)));
+function pump(){
+  pumpTimer = 0;
+  while(activeThumb < MAX_THUMB_REQ){
+    let kind = null;
+    for(const k in thumbQ){
+      const q = thumbQ[k];
+      if(q.length && (!kind || q[q.length - 1].seq > thumbQ[kind][thumbQ[kind].length - 1].seq)) kind = k;
+    }
+    if(!kind) return;
+    const q = thumbQ[kind], chunk = [];
+    while(q.length && chunk.length < SIZES[kind].batch){
+      const it = q.pop();
+      if(isWanted(it.src)) chunk.push(it); else it.rej(new Cancelled());
+    }
+    if(!chunk.length) continue;
+    activeThumb++;
+    sendThumbs(kind, chunk).finally(() => { activeThumb--; pump(); });
   }
+}
+function sendThumbs(kind, chunk){
+  const cfg = SIZES[kind];
+  return call(CONTENT, "files/get_thumbnail_batch",
+              {entries: chunk.map(it => ({path: it.path, format: "jpeg", size: cfg.size, mode: cfg.mode}))}, direct)
+    .then(j => {
+      const list = (j && j.entries) || [];
+      chunk.forEach((it, i) => {
+        const e = list[i];
+        if(e && e[".tag"] === "success" && e.thumbnail) it.res(b64ToBytes(e.thumbnail));
+        else it.rej(new ThumbFail());
+      });
+    })
+    .catch(err => chunk.forEach(it => it.rej(err instanceof ApiError && err.status === 409 ? new ThumbFail() : err)));
+}
+
+// 大きすぎる原寸ファイルの代わりに出す枠（タップで原寸を読み込む）
+const origSize = path => { const e = entryMap && entryMap.get(path); return (e && e.s) || 0; };
+const tapped = new Set();
+function bigPlaceholder(path){
+  const mb = (origSize(path) / 1048576).toFixed(1), x = escH(extOf(path).toUpperCase());
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400"><rect width="300" height="400" fill="#3a332c"/>`+
+    `<text x="150" y="188" fill="#f2eee9" font-family="sans-serif" font-size="17" text-anchor="middle">大きい ${x}（${mb}MB）</text>`+
+    `<text x="150" y="218" fill="#f0765a" font-family="sans-serif" font-size="15" text-anchor="middle">タップで表示</text></svg>`;
+  return "data:image/svg+xml," + encodeURIComponent(svg);
 }
 
 function resolveSrc(src){
@@ -509,9 +567,13 @@ function resolveSrc(src){
   }
   if(inflight.has(src)) return inflight.get(src);
 
-  const viaLink = () => tempLink(path).then(url => { links.set(src, {url, exp: Date.now() + LINK_TTL}); return url; });
+  const viaLink = () => {
+    if(kind !== "video" && origSize(path) > ORIG_AUTO_MAX && !tapped.has(src)) return Promise.resolve(bigPlaceholder(path));
+    return call(API, "files/get_temporary_link", {path}, null, () => isWanted(src))
+      .then(j => { links.set(src, {url: j.link, exp: Date.now() + LINK_TTL}); return j.link; });
+  };
   const p = (useLink ? viaLink() :
-    thumbnail(path, kind).then(bytes => {
+    thumbnail(src, path, kind).then(bytes => {
       learnDims(path, jpegSize(bytes));
       const url = URL.createObjectURL(new Blob([bytes], {type: "image/jpeg"}));
       cacheBlob(kind, src, url);
@@ -527,7 +589,8 @@ function resolveSrc(src){
 function invalidate(src){ links.delete(src); }
 function releaseAll(){
   for(const m of Object.values(blobs)){ for(const u of m.values()) URL.revokeObjectURL(u); m.clear(); }
-  links.clear(); inflight.clear(); noThumb.clear();
+  links.clear(); inflight.clear(); noThumb.clear(); tapped.clear();
+  for(const k in thumbQ){ for(const it of thumbQ[k]) it.rej(new Cancelled()); thumbQ[k] = []; }
 }
 
 /* =====================================================================
@@ -575,8 +638,9 @@ let syncing = false, lastSync = 0;
 
 // キャッシュは「どのアカウントの・どのフォルダの」一覧かを記録し、違えば使わない
 const currentAccount = () => { const a = loadAuth(); return (a && a.u) || ""; };
-async function saveState(g){
-  await idbPut("kv", "state", {v: STATE_VERSION, root: ROOT, account: currentAccount(), cursor, entries: [...entryMap.values()], gallery: g, savedAt: Date.now()});
+// 変換結果は保存しない（起動時に一覧から作り直す方が、保存・読み込みのメモリが半分で済む）
+async function saveState(){
+  await idbPut("kv", "state", {v: STATE_VERSION, root: ROOT, account: currentAccount(), cursor, entries: [...entryMap.values()], savedAt: Date.now()});
 }
 
 // 今表示している画面が使うデータだけを比べる（w/h は比べない＝学習で再描画しない）
@@ -616,10 +680,11 @@ async function boot(){
     st = await idbGet("kv", "state");
     dims = await idbAll("dims");
   }catch(e){ st = null; }
-  if(st && st.v === STATE_VERSION && st.root === ROOT && st.account === currentAccount() && st.cursor && Array.isArray(st.gallery)){
+  if(st && st.v === STATE_VERSION && st.root === ROOT && st.account === currentAccount() && st.cursor && Array.isArray(st.entries)){
     entryMap = new Map(st.entries.map(e => [e.p, e]));
     cursor = st.cursor;
-    publish(st.gallery, false);       // キャッシュで即表示
+    st = null;                        // 読み込んだ配列はすぐ手放す
+    publish(convert(entryMap), false);   // キャッシュで即表示
     backgroundSync();                 // 差分は裏で
     return;
   }
@@ -627,9 +692,8 @@ async function boot(){
   try{
     const r = await fullFetch(updateLoading);
     entryMap = r.map; cursor = r.cursor; lastSync = Date.now();
-    const g = convert(entryMap);
-    saveState(g).catch(e => warn("一覧をこの端末に保存できませんでした"));
-    publish(g, false);
+    saveState().catch(e => warn("一覧をこの端末に保存できませんでした"));
+    publish(convert(entryMap), false);
   }catch(e){ fatal(e); }
 }
 function fatal(e){
@@ -657,9 +721,8 @@ async function backgroundSync(){
     lastSync = Date.now();
     if(changed){
       cursor = cur;
-      const g = convert(entryMap);
-      await saveState(g).catch(() => warn("一覧をこの端末に保存できませんでした"));
-      publish(g, true);
+      await saveState().catch(() => warn("一覧をこの端末に保存できませんでした"));
+      publish(convert(entryMap), true);
     }
   }catch(e){
     if(e instanceof AuthError) renderConnect(MSG_EXPIRED);
@@ -711,11 +774,19 @@ function scheduleVideoScan(){
 function scanVideos(){
   if(!ready) return;
   const vh = window.innerHeight || 800;
-  document.querySelectorAll("video[data-dbx-src]").forEach(v => {
-    if(v.getAttribute("src") || v.dataset.pending) return;
-    const r = v.getBoundingClientRect();
-    if(r.bottom > -vh * NEAR && r.top < vh * (1 + NEAR)) attachVideo(v, false);
-  });
+  // 先に位置をまとめて測ってから変更する（測る・書き換えるを交互にしない）
+  const list = [...document.querySelectorAll("video[data-dbx-src]")].map(v => ({v, r: v.getBoundingClientRect()}));
+  for(const {v, r} of list){
+    const near = r.bottom > -vh * VIDEO_NEAR && r.top < vh * (1 + VIDEO_NEAR);
+    const far  = r.bottom < -vh * VIDEO_FAR  || r.top > vh * (1 + VIDEO_FAR);
+    if(near){ if(!v.getAttribute("src") && !v.dataset.pending) attachVideo(v, false); }
+    else if(far && v.getAttribute("src") && v.paused) releaseVideo(v);   // 再生中のものは外さない
+  }
+}
+function releaseVideo(v){
+  v.removeAttribute("src");
+  delete v.dataset.retried;
+  try{ v.load(); }catch(e){}   // 読み込んだデータとデコーダを手放す
 }
 async function attachVideo(v, play){
   v.dataset.pending = "1";
@@ -724,12 +795,24 @@ async function attachVideo(v, play){
     if(!v.isConnected || v.getAttribute("src")) return;
     v.src = url;
     if(play) v.play().catch(() => {});
-  }catch(e){ warn("動画の URL を取得できませんでした", e); }
+  }catch(e){ if(!(e instanceof Cancelled)) warn("動画の URL を取得できませんでした", e); }
   finally{ delete v.dataset.pending; }
 }
 function setupVideos(){
   addEventListener("scroll", scheduleVideoScan, {passive: true});
   addEventListener("resize", scheduleVideoScan);
+  // 大きすぎて自動では読まなかった画像：タップで原寸を読み込む
+  document.addEventListener("click", e => {
+    const img = e.target && e.target.closest && e.target.closest(".media-box img[data-src]");
+    if(!img) return;
+    const src = img.dataset.src;
+    if(!src.startsWith("dbx:") || tapped.has(src) || !String(img.getAttribute("src") || "").startsWith("data:image/svg")) return;
+    tapped.add(src);
+    const box = img.closest(".media-box");
+    if(box) box.classList.add("loading");
+    resolveSrc(src).then(url => { if(img.isConnected && img.dataset.src === src) img.src = url; })
+      .catch(() => { if(box) box.classList.remove("loading"); });
+  });
   // 近づく前にタップされた場合の保険
   document.addEventListener("pointerdown", e => {
     const v = e.target && e.target.closest && e.target.closest("video[data-dbx-src]");
