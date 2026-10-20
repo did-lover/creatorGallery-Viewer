@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gallery">
+<meta name="theme-color" content="#F7F5F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14110F" media="(prefers-color-scheme: dark)">
+<title>My Creator Gallery</title>
+<style>
+:root{
+  --paper:#F7F5F2; --surface:#FFFFFF; --surface-2:#F1EDE7;
+  --ink:#1E1B18; --muted:#6B645C; --faint:#9A9188;
+  --line:#E7E2DB; --line-strong:#D9D2C8;
+  --accent:#E0603F; --accent-ink:#B44528; --accent-weak:rgba(224,96,63,.10);
+  --shadow:0 1px 2px rgba(30,27,24,.04), 0 6px 20px rgba(30,27,24,.06);
+  --serif:"Hiragino Mincho ProN","Yu Mincho",YuMincho,"Noto Serif JP",serif;
+  --sans:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",YuGothic,"Noto Sans JP",Meiryo,sans-serif;
+  --col:640px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#14110F; --surface:#1E1A17; --surface-2:#241F1B;
+    --ink:#F2EEE9; --muted:#A79E93; --faint:#7C7267;
+    --line:#2E2823; --line-strong:#3A332C;
+    --accent:#F0765A; --accent-ink:#F4907A; --accent-weak:rgba(240,118,90,.14);
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#14110F; --surface:#1E1A17; --surface-2:#241F1B;
+  --ink:#F2EEE9; --muted:#A79E93; --faint:#7C7267;
+  --line:#2E2823; --line-strong:#3A332C;
+  --accent:#F0765A; --accent-ink:#F4907A; --accent-weak:rgba(240,118,90,.14);
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+}
+:root[data-theme="light"]{
+  --paper:#F7F5F2; --surface:#FFFFFF; --surface-2:#F1EDE7;
+  --ink:#1E1B18; --muted:#6B645C; --faint:#9A9188;
+  --line:#E7E2DB; --line-strong:#D9D2C8;
+  --accent:#E0603F; --accent-ink:#B44528; --accent-weak:rgba(224,96,63,.10);
+  --shadow:0 1px 2px rgba(30,27,24,.04), 0 6px 20px rgba(30,27,24,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--sans); line-height:1.6;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+img{display:block; max-width:100%}
+button{font:inherit; color:inherit; cursor:pointer}
+a{color:inherit; text-decoration:none}
+
+/* ---------- shell ---------- */
+.app{max-width:var(--col); margin:0 auto; min-height:100vh; background:var(--paper);
+  border-inline:1px solid var(--line);}
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; gap:12px;
+  padding:calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  background:color-mix(in srgb, var(--paper) 82%, transparent);
+  -webkit-backdrop-filter:saturate(1.2) blur(14px); backdrop-filter:saturate(1.2) blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.back{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:38px; height:38px; margin-inline-start:-6px; border:0; border-radius:11px;
+  background:transparent; color:var(--ink); font-size:20px; line-height:1;
+  transition:background .15s ease;
+}
+.back:hover{background:var(--surface-2)}
+.back svg{width:20px;height:20px}
+.topbar .titles{min-width:0; flex:1}
+.topbar .kicker{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent-ink); font-weight:700}
+.topbar h1{margin:0; font-family:var(--serif); font-weight:600; font-size:19px; line-height:1.25;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.theme-btn{
+  width:38px;height:38px;border:1px solid var(--line-strong);border-radius:11px;background:var(--surface);
+  display:inline-flex;align-items:center;justify-content:center;font-size:16px; transition:transform .15s ease;
+}
+.theme-btn:active{transform:scale(.92)}
+.sort-btn{height:38px;padding:0 12px;border:1px solid var(--line-strong);border-radius:11px;background:var(--surface);
+  font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap;display:inline-flex;align-items:center;gap:3px;
+  transition:transform .15s ease}
+.sort-btn:active{transform:scale(.95)}
+
+.view{padding:16px 16px calc(env(safe-area-inset-bottom) + 40px); animation:rise .28s ease both}
+@keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+@media (prefers-reduced-motion: reduce){.view,.app *{animation:none !important}}
+
+.lede{color:var(--muted); font-size:13.5px; margin:2px 0 18px}
+
+/* ---------- creators grid ---------- */
+.grid-creators{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.creator-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:16px; overflow:hidden;
+  box-shadow:var(--shadow); transition:transform .18s ease, border-color .18s ease;
+}
+.creator-card:active{transform:scale(.985)}
+.creator-card:hover{border-color:var(--line-strong)}
+.creator-cover{aspect-ratio:16/10; width:100%; object-fit:cover; background:var(--surface-2)}
+.creator-body{padding:13px 14px 15px}
+.creator-meta{min-width:0}
+.creator-meta .name{font-family:var(--serif); font-weight:600; font-size:15px; line-height:1.3;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.creator-meta .count{font-size:12px; color:var(--faint); margin-top:1px}
+
+/* ---------- creator header (posts view) ---------- */
+.creator-hero{margin:-16px -16px 16px; position:relative}
+.creator-hero .banner{aspect-ratio:16/8; width:100%; object-fit:cover; background:var(--surface-2)}
+.creator-hero .scrim{position:absolute; inset:0;
+  background:linear-gradient(to top, rgba(10,8,6,.74), rgba(10,8,6,.15) 46%, rgba(10,8,6,0) 68%)}
+.creator-hero .hero-body{position:absolute; left:16px; right:16px; bottom:13px; min-width:0}
+.creator-hero .hn .name{font-family:var(--serif); font-size:23px; font-weight:600; line-height:1.2; color:#fff;
+  text-shadow:0 1px 12px rgba(0,0,0,.35)}
+.creator-hero .hn .handle{color:rgba(255,255,255,.88); font-size:12.5px; font-weight:600; letter-spacing:.02em}
+.bio{color:var(--muted); font-size:13.5px; margin:12px 2px 20px}
+.section-label{display:flex;align-items:center;gap:10px; font-size:11px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint); font-weight:700; margin:0 2px 12px}
+.section-label::after{content:""; flex:1; height:1px; background:var(--line)}
+
+/* ---------- posts grid ---------- */
+.grid-posts{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.post-card{background:var(--surface); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+  box-shadow:var(--shadow); transition:transform .18s ease, border-color .18s ease}
+.post-card:active{transform:scale(.985)}
+.post-card:hover{border-color:var(--line-strong)}
+.thumb-wrap{position:relative; aspect-ratio:1/1; background:var(--surface-2)}
+.thumb-wrap img{width:100%;height:100%;object-fit:cover}
+.badge{position:absolute; right:8px; bottom:8px; display:inline-flex; align-items:center; gap:4px;
+  padding:3px 7px; border-radius:999px; font-size:11px; font-weight:700; color:#fff;
+  background:rgba(20,17,15,.62); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px)}
+.post-card .pc-body{padding:10px 11px 12px}
+.post-card .p-title{font-size:13.5px; font-weight:600; line-height:1.4; display:-webkit-box;
+  -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+.post-card .p-date{font-size:11.5px; color:var(--faint); margin-top:5px; font-variant-numeric:tabular-nums}
+
+/* ---------- post detail ---------- */
+.post-head{margin:2px 2px 18px}
+.post-head h2{font-family:var(--serif); font-size:23px; font-weight:600; line-height:1.3; margin:0 0 8px; text-wrap:balance}
+.post-byline{display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px}
+.post-byline .sep{color:var(--faint)}
+.post-byline b{color:var(--ink); font-weight:600}
+.post-body-text{color:var(--muted); font-size:14.5px; line-height:1.85; margin:16px 2px 22px; white-space:pre-wrap}
+.feed{display:flex; flex-direction:column; gap:12px}
+.feed figure{margin:0; border-radius:14px; overflow:hidden; background:var(--surface-2);
+  border:1px solid var(--line)}
+.feed img{width:100%; height:auto; display:block}
+/* 画像の枠を先に確保（読込前でも高さが決まるのでスクロールが安定する） */
+.media-box{position:relative; width:100%; background:var(--surface-2); aspect-ratio:3/4}
+.media-box img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain}
+/* 遅延読み込み対象は読み込み完了までフェードイン（サムネ・本文画像 共通） */
+img[data-src]{opacity:0; transition:opacity .25s ease}
+img[data-src].ready{opacity:1}
+.media-box.loading::after{content:""; position:absolute; left:50%; top:50%; width:22px; height:22px;
+  margin:-11px 0 0 -11px; border-radius:50%; border:2px solid var(--line-strong);
+  border-top-color:var(--accent); animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.media-box.loading::after{animation:none}}
+.feed video{width:100%; display:block; background:#000; aspect-ratio:16/9; object-fit:contain}
+.media-video{position:relative; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center;
+  color:#fff; background:#000}
+.media-video img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.55}
+.media-video .play{position:relative; width:64px;height:64px;border-radius:50%;
+  background:rgba(255,255,255,.16); border:1.5px solid rgba(255,255,255,.7);
+  display:flex;align-items:center;justify-content:center; -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px)}
+.media-video .play svg{width:26px;height:26px;margin-left:3px}
+.media-video .vlabel{position:absolute; left:12px; bottom:11px; font-size:12px; font-weight:600;
+  background:rgba(0,0,0,.45); padding:3px 9px; border-radius:999px}
+.feed figcaption{font-size:11.5px; color:var(--faint); padding:8px 12px; border-top:1px solid var(--line)}
+.count-note{color:var(--faint); font-size:12px; margin:14px 2px 0; text-align:center}
+
+.foot{color:var(--faint); font-size:11.5px; text-align:center; padding:26px 16px}
+.foot code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
+  background:var(--surface-2); padding:1px 6px; border-radius:6px}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<!-- 実データがあれば data.js（build.py が生成）を読み込む。無ければ下のサンプルで動く -->
+<script src="data.js"></script>
+<script>
+/* =====================================================================
+   データモデル = フォルダ構造そのもの
+   creators/<クリエイター>/<投稿>/  にある画像・動画 + meta.json を表す。
+   本番では data.json を fetch するか、ネイティブアプリがフォルダを走査して
+   この形のオブジェクトを組み立てる。ここではサンプルで動きを確認する。
+   ===================================================================== */
+
+// --- プレースホルダ画像生成（SVGデータURI）: 本番では実ファイルのURLに置換 ---
+function ph(w,h,c1,c2,label){
+  const svg =
+   `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>`+
+   `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>`+
+   `<stop offset='0' stop-color='${c1}'/><stop offset='1' stop-color='${c2}'/></linearGradient>`+
+   `<pattern id='d' width='22' height='22' patternUnits='userSpaceOnUse'>`+
+   `<circle cx='2' cy='2' r='1.3' fill='rgba(255,255,255,.14)'/></pattern></defs>`+
+   `<rect width='100%' height='100%' fill='url(#g)'/>`+
+   `<rect width='100%' height='100%' fill='url(#d)'/>`+
+   `<text x='50%' y='50%' fill='rgba(255,255,255,.9)' font-family='sans-serif' `+
+   `font-size='${Math.round(Math.min(w,h)/9)}' font-weight='600' text-anchor='middle' `+
+   `dominant-baseline='middle'>${label}</text></svg>`;
+  return "data:image/svg+xml,"+encodeURIComponent(svg);
+}
+const G=[["#f6a56b","# e0603f"],["#7db1d6","#3f6fd0"],["#c58fd8","#7d4fb0"],
+  ["#7fcb9b","#2f8f6a"],["#e88fae","#c04f7a"],["#e2c46a","#c9932f"],["#8fb0e8","#5a6fd0"]];
+const g=i=>G[i%G.length].map(s=>s.replace(/\s/g,""));
+
+function img(seed,label){const c=g(seed);return ph(900,900,c[0],c[1],label);}
+function cover(seed,label){const c=g(seed+2);return ph(1200,750,c[0],c[1],label);}
+function avatar(seed){const c=g(seed+1);return ph(200,200,c[0],c[1],"");}
+// 実データにカバー/サムネのパスがあればそれを、無ければ名前から色を生成
+function seedOf(s){let h=0;s=String(s);for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h;}
+function creatorCover(c){return c.cover||cover(seedOf(c.name),String(c.name).slice(0,3));}
+function postCover(p){return p.cover||img(seedOf(p.title||p.id),"");}
+
+// 投稿を作るヘルパ: n枚の画像 +（任意で）動画
+function post(id,title,date,body,seed,imgs,videos){
+  const media=[];
+  for(let i=0;i<imgs;i++) media.push({type:"image", src:img(seed+i, (i+1)+"/"+imgs), name:String(i+1).padStart(3,"0")+".jpg"});
+  for(let i=0;i<(videos||0);i++) media.push({type:"video", poster:cover(seed+10+i,""), name:"clip"+(i+1)+".mp4", dur:"0:"+(24+i*7)});
+  return {id,title,date,body,cover:img(seed,title.slice(0,6)),media};
+}
+
+const SAMPLE=[
+  {id:"aoi", name:"蒼衣アトリエ", handle:"@aoi_atelier", seed:1,
+   bio:"オリジナルキャラのイラストと制作過程を投稿しています。月2回更新。",
+   posts:[
+     post("p1","初夏の制服ラフ集","2025-06-14","今月のラフスケッチをまとめました。線画前の試行錯誤も一緒に。",1,5,0),
+     post("p2","水辺のワンシーン｜メイキング","2025-05-30","背景の塗り分けを段階的に。動画で筆の動きも収録しています。",7,4,1),
+     post("p3","春の立ち絵 差分パック","2025-05-12","表情差分をまとめて。透過PNG同梱です。",13,6,0),
+     post("p4","線画練習アーカイブ","2025-04-28","手の描き方を重点的に。",19,3,0),
+   ]},
+  {id:"komorebi", name:"木漏れ日スタジオ", handle:"@komorebi_st", seed:3,
+   bio:"風景と光をテーマにしたデジタル背景画。壁紙配布あり。",
+   posts:[
+     post("p1","夕暮れの通学路","2025-06-10","逆光の表現に挑戦した一枚と、色違いバリエーション。",3,4,0),
+     post("p2","雨上がりの街｜4K壁紙","2025-05-22","反射の描き込みを増やしました。スマホ用サイズも同梱。",23,3,0),
+     post("p3","夜市のあかり","2025-05-03","暖色ライティングの練習。制作タイムラプス付き。",29,3,1),
+   ]},
+  {id:"sora", name:"そらの散歩道", handle:"@sora_walk", seed:5,
+   bio:"ゆるいタッチの日常イラストと落書き。ほぼ毎週更新。",
+   posts:[
+     post("p1","休日のねこたち","2025-06-16","うちの子スケッチ詰め合わせ。",5,7,0),
+     post("p2","カフェ落書きログ","2025-06-02","外出先で描いた小さな絵を並べました。",35,5,0),
+   ]},
+  {id:"hagane", name:"鋼メカ工房", handle:"@hagane_mecha", seed:6,
+   bio:"オリジナルメカのデザイン画と3D。設定資料も公開。",
+   posts:[
+     post("p1","試作フレーム 07 設定画","2025-06-08","可動部の検討スケッチと三面図。",6,4,0),
+     post("p2","起動シーケンス｜3Dアニメ","2025-05-18","Blenderで組んだ起動カット。静止画カットも収録。",41,3,1),
+     post("p3","武装バリエーション案","2025-04-30","ボツ案も含めてまとめました。",47,5,0),
+   ]},
+];
+
+// 実データ（window.GALLERY = data.js）があればそれを、無ければサンプルを使う
+const DATA=(window.GALLERY&&window.GALLERY.length)?window.GALLERY:SAMPLE;
+const ROOT_NAME=window.ROOT_NAME||"creators"; // トップ見出し = 親ディレクトリ名
+const totalMedia=p=>p.media.length;
+
+/* ---------- routing ---------- */
+const app=document.getElementById("app");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// 表示用: 投稿名の冒頭にある「YYYYMMDD-」を隠す（フォルダ名・並び順はそのまま）
+const cleanTitle=t=>{t=String(t);const s=t.replace(/^\d{8}[-_.\s]+/,"");return s||t;};
+// 並び順（昇順/降順）。フォルダ名で自然順ソート → 日付接頭辞があれば時系列に並ぶ
+let SORT_DIR=(()=>{try{return localStorage.getItem("gallery-sort")||"asc";}catch(e){return "asc";}})();
+function natCmp(a,b){return String(a).localeCompare(String(b),"ja",{numeric:true,sensitivity:"base"});}
+function sortItems(list,keyFn){const a=list.slice().sort((x,y)=>natCmp(keyFn(x),keyFn(y)));return SORT_DIR==="desc"?a.reverse():a;}
+function toggleSort(){SORT_DIR=SORT_DIR==="asc"?"desc":"asc";try{localStorage.setItem("gallery-sort",SORT_DIR);}catch(e){}route();}
+const findCreator=id=>DATA.find(c=>c.id===id);
+
+const ICON_BACK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+const ICON_PLAY='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const ICON_STACK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>';
+
+function topbar({kicker,title,back,sort}){
+  return `<div class="topbar">`+
+    (back?`<button class="back" onclick="location.hash='${back}'" aria-label="戻る">${ICON_BACK}</button>`:"")+
+    `<div class="titles">`+
+      (kicker?`<div class="kicker">${esc(kicker)}</div>`:"")+
+      `<h1>${esc(title)}</h1>`+
+    `</div>`+
+    (sort?`<button class="sort-btn" onclick="toggleSort()" aria-label="並び替え">${SORT_DIR==="asc"?"↑ 昇順":"↓ 降順"}</button>`:"")+
+    `<button class="theme-btn" onclick="toggleTheme()" aria-label="テーマ切替">◐</button>`+
+  `</div>`;
+}
+
+function viewCreators(){
+  const cards=sortItems(DATA,c=>c.name).map(c=>{
+    const n=c.posts.length;
+    return `<a class="creator-card" href="#/c/${c.id}">`+
+      `<img class="creator-cover" data-src="${creatorCover(c)}" alt="" decoding="async">`+
+      `<div class="creator-body">`+
+        `<div class="creator-meta"><div class="name">${esc(c.name)}</div>`+
+        `<div class="count">${n} ファイル</div></div>`+
+      `</div></a>`;
+  }).join("");
+  app.innerHTML=topbar({kicker:"My Gallery",title:ROOT_NAME,sort:true})+
+    `<div class="view">`+
+      `<p class="lede">保存済みのクリエイターを一覧表示。タップで投稿一覧へ。</p>`+
+      `<div class="grid-creators">${cards}</div>`+
+      `<div class="foot">フォルダ構成 <code>&lt;フォルダ名&gt;/&lt;クリエイター&gt;/&lt;投稿&gt;/画像・動画</code></div>`+
+    `</div>`;
+  setupLazyImages();
+}
+
+function viewPosts(cid){
+  const c=findCreator(cid); if(!c){location.hash="#/"; return;}
+  const cards=sortItems(c.posts,p=>p.title).map(p=>{
+    const vids=p.media.filter(m=>m.type==="video").length;
+    const badge=vids
+      ? `<span class="badge">${ICON_PLAY.replace('viewBox','style="width:11px;height:11px" viewBox')} 動画</span>`
+      : `<span class="badge">${ICON_STACK} ${totalMedia(p)}</span>`;
+    return `<a class="post-card" href="#/p/${c.id}/${p.id}">`+
+      `<div class="thumb-wrap"><img data-src="${postCover(p)}" alt="" decoding="async">${badge}</div>`+
+      `<div class="pc-body"><div class="p-title">${esc(cleanTitle(p.title))}</div>`+
+      `<div class="p-date">${esc(p.date)}</div></div></a>`;
+  }).join("");
+  app.innerHTML=topbar({kicker:"",title:c.name,back:"#/",sort:true})+
+    `<div class="view">`+
+      `<div class="creator-hero">`+
+        `<img class="banner" src="${creatorCover(c)}" alt="">`+
+        `<div class="scrim"></div>`+
+        `<div class="hero-body">`+
+          `<div class="hn"><div class="name">${esc(c.name)}</div></div>`+
+        `</div>`+
+      `</div>`+
+      `<div class="section-label">ファイル ${c.posts.length}</div>`+
+      `<div class="grid-posts">${cards}</div>`+
+    `</div>`;
+  window.scrollTo(0,0);
+  setupLazyImages();
+}
+
+function viewPost(cid,pid){
+  const c=findCreator(cid); if(!c){location.hash="#/"; return;}
+  const p=c.posts.find(x=>x.id===pid); if(!p){location.hash="#/c/"+cid; return;}
+  const feed=p.media.map(m=>{
+    if(m.type==="video"){
+      if(m.src){ // 実データ: 再生するまで読み込まない（preload="none"）
+        return `<figure><video controls playsinline preload="none"${m.poster?` poster="${m.poster}"`:""} src="${m.src}"></video>`+
+          `<figcaption>${esc(m.name)}</figcaption></figure>`;
+      }
+      return `<figure><div class="media-video">`+ // サンプル: プレースホルダ
+        `<img src="${m.poster}" alt="">`+
+        `<div class="play">${ICON_PLAY}</div>`+
+        `<span class="vlabel">▶ 動画 ${esc(m.dur||"")}</span>`+
+      `</div><figcaption>${esc(m.name)}</figcaption></figure>`;
+    }
+    // 画像: 枠だけ先に置き、近づいた時に読み込む（遠ざかると破棄してメモリを解放）
+    const ar=(m.w&&m.h)?` style="aspect-ratio:${m.w}/${m.h}"`:"";
+    return `<figure><div class="media-box"${ar}>`+
+      `<img data-src="${m.src}" alt="${esc(m.name)}" decoding="async">`+
+    `</div><figcaption>${esc(m.name)}</figcaption></figure>`;
+  }).join("");
+  app.innerHTML=topbar({kicker:c.name,title:cleanTitle(p.title),back:"#/c/"+c.id})+
+    `<div class="view">`+
+      `<div class="post-head"><h2>${esc(cleanTitle(p.title))}</h2>`+
+        `<div class="post-byline">`+
+          `<b>${esc(c.name)}</b><span class="sep">•</span>`+
+          `<span style="font-variant-numeric:tabular-nums">${esc(p.date)}</span></div>`+
+      `</div>`+
+      `<div class="feed">${feed}</div>`+
+      `<p class="count-note">— ${totalMedia(p)} 点のメディア —</p>`+
+    `</div>`;
+  window.scrollTo(0,0);
+  setupLazyImages();
+}
+
+/* ---------- 画像の遅延読み込み / 破棄 ----------
+   近づいた画像だけ読み込み、大きく離れたら src を外してメモリを解放する。
+   これで何十枚あっても、同時に展開される画像は数枚ぶんに抑えられる。 */
+let lazyItems=[], lazyTick=false;
+const LOAD_SCREENS=1.5;   // 画面の何倍まで近づいたら読み込むか
+const KEEP_SCREENS=4;     // 画面の何倍まで離れたら破棄するか（読み込み範囲より広く）
+
+function lazyLoad(img){
+  if(img.getAttribute("src")) return;
+  const box=img.closest(".media-box");
+  if(box) box.classList.add("loading");
+  img.onload =()=>{if(box)box.classList.remove("loading"); img.classList.add("ready");};
+  img.onerror=()=>{if(box)box.classList.remove("loading");};
+  img.src=img.dataset.src;
+}
+function lazyUnload(img){
+  if(!img.getAttribute("src")) return;
+  img.classList.remove("ready");
+  img.removeAttribute("src");   // デコード済みビットマップを解放してメモリを戻す
+  const box=img.closest(".media-box");
+  if(box) box.classList.remove("loading");
+}
+// 各画像の位置を一度だけ測って記憶する（枠サイズは読み込み状態に左右されないので測り直し不要）
+function measureLazy(){
+  const y=window.scrollY;
+  lazyItems=[...document.querySelectorAll("img[data-src]")].map(img=>{
+    const r=img.getBoundingClientRect();
+    return {img, top:r.top+y, bottom:r.top+y+r.height};
+  });
+}
+function updateLazy(){
+  if(!lazyItems.length) return;
+  const vh=window.innerHeight||800, y=window.scrollY;
+  const loadTop=y-vh*LOAD_SCREENS, loadBottom=y+vh*(1+LOAD_SCREENS);
+  const keepTop=y-vh*KEEP_SCREENS, keepBottom=y+vh*(1+KEEP_SCREENS);
+  for(const it of lazyItems){
+    if(it.bottom>loadTop && it.top<loadBottom) lazyLoad(it.img);
+    else if(it.bottom<keepTop || it.top>keepBottom) lazyUnload(it.img);
+  }
+}
+function setupLazyImages(){
+  measureLazy();
+  updateLazy();
+}
+// スクロールは毎フレーム1回だけ処理（描画をブロックしない）
+addEventListener("scroll",()=>{
+  if(lazyTick) return;
+  lazyTick=true;
+  requestAnimationFrame(()=>{lazyTick=false; updateLazy();});
+},{passive:true});
+addEventListener("resize",()=>{measureLazy(); updateLazy();});
+
+/* ---------- theme toggle ---------- */
+function currentTheme(){
+  return document.documentElement.getAttribute("data-theme")
+    || (matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+}
+function toggleTheme(){
+  const next=currentTheme()==="dark"?"light":"dark";
+  document.documentElement.setAttribute("data-theme",next);
+  try{localStorage.setItem("gallery-theme",next)}catch(e){}
+}
+(function initTheme(){
+  try{const t=localStorage.getItem("gallery-theme"); if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}
+})();
+
+/* ---------- router ---------- */
+function route(){
+  lazyItems=[];   // 画面を離れたら前の画面の監視対象を捨てる
+  const h=location.hash.replace(/^#\/?/,"");
+  const parts=h.split("/").filter(Boolean);
+  if(parts[0]==="c"&&parts[1]) return viewPosts(parts[1]);
+  if(parts[0]==="p"&&parts[1]&&parts[2]) return viewPost(parts[1],parts[2]);
+  return viewCreators();
+}
+addEventListener("hashchange",route);
+route();
+</script>
+</body>
+</html>
