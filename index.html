@@ -87,7 +87,14 @@ a{color:inherit; text-decoration:none}
   transition:transform .15s ease}
 .sort-btn:active{transform:scale(.95)}
 
-.view{padding:16px 16px calc(env(safe-area-inset-bottom) + 40px); animation:rise .28s ease both}
+.view{padding:16px 16px calc(env(safe-area-inset-bottom) + 40px)}
+/* 画面の切り替え時に下から浮かび上がる。
+   ページ全体（.view）を動かすと、長い投稿では iPhone がページの長さぶんの描画メモリを確保して落ちるため、
+   最初の画面に入る小さな要素だけを同じ動きで動かす（同時に同じ動きなので、見た目は .view 全体を動かすのと同じ） */
+.view > :not(.grid-creators):not(.grid-posts):not(.feed),
+.grid-creators > :nth-child(-n+12),
+.grid-posts > :nth-child(-n+12),
+.feed > :nth-child(-n+6){animation:rise .28s ease both}
 @keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
 @media (prefers-reduced-motion: reduce){.view,.app *{animation:none !important}}
 
